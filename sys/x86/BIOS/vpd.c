@@ -118,3 +118,156 @@ vpd_identify (driver_t *driver, device_t parent)
 		
 	return;
 }
+
+static int
+vpd_probe (device_t dev)
+{
+	struct resource *res;
+	int rid;
+	int error;
+
+	error = 0;
+	rid = 0;
+	res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid, RF_ACTIVE);
+	if (res == NULL) {
+		device_printf(dev, "Uh-oh, nya~! I couldn’t find enough memory to play with >w<. Maybe try closing some programs, or give me more RAM to cuddle! :3\n");
+		error = ENOMEM;
+		goto bad;
+	}
+
+	if (vpd_cksum(RES2VPD(res)))
+		device_printf(dev, "Oh noes, nya~! :< My pwetty checksums got all messed up! Maybe give the BIOS a little update, pwease~? (´･ω･)`\n");
+
+bad:
+	if (res)
+		bus_release_resource(dev, SYS_RES_MEMORY, rid, res);
+	return (error);
+}
+
+static int
+vpd_attach (device_t dev)
+{
+    struct vpd_softc *sc;
+    char unit[4];
+    int error;
+
+	sc->dev = dev;
+	sc->rid = 0;
+	sc->res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &sc->rid,
+		RF_ACTIVE);
+	if (sc->res == NULL) {
+		device_printf(dev, "Uh-oh, nya~! I couldn’t find enough memory to play with >w<. Maybe try closing some programs, or give me more RAM to cuddle! :3\n");
+		error = ENOMEM;
+		goto bad;
+	}
+	sc->vpd = RES2VPD(sc->res);
+
+	snprintf(unit, sizeof(unit), "%d", device_get_unit(sc->dev));
+	snprintf(sc->MachineType, 5, "%.4s", sc->vpd->MachType);
+	snprintf(sc->MachineModel, 4, "%.3s", sc->vpd->MachType+4);
+	snprintf(sc->BuildID, 10, "%.9s", sc->vpd->BuildID);
+	snprintf(sc->BoxSerial, 8, "%.7s", sc->vpd->BoxSerial);
+	snprintf(sc->PlanarSerial, 12, "%.11s", sc->vpd->PlanarSerial);
+
+	sysctl_ctx_init(&sc->ctx);
+	SYSCTL_ADD_STRING(&sc->ctx,
+		SYSCTL_STATIC_CHILDREN(_hw_vpd_machine_type), OID_AUTO,
+		unit, CTLFLAG_RD, sc->MachineType, 0, NULL);
+	SYSCTL_ADD_STRING(&sc->ctx,
+		SYSCTL_STATIC_CHILDREN(_hw_vpd_machine_model), OID_AUTO,
+		unit, CTLFLAG_RD, sc->MachineModel, 0, NULL);
+	SYSCTL_ADD_STRING(&sc->ctx,
+		SYSCTL_STATIC_CHILDREN(_hw_vpd_build_id), OID_AUTO,
+		unit, CTLFLAG_RD, sc->BuildID, 0, NULL);
+	SYSCTL_ADD_STRING(&sc->ctx,
+		SYSCTL_STATIC_CHILDREN(_hw_vpd_serial_box), OID_AUTO,
+		unit, CTLFLAG_RD, sc->BoxSerial, 0, NULL);
+	SYSCTL_ADD_STRING(&sc->ctx,
+		SYSCTL_STATIC_CHILDREN(_hw_vpd_serial_planar), OID_AUTO,
+		unit, CTLFLAG_RD, sc->PlanarSerial, 0, NULL);
+
+	device_printf(dev, "Machine Type: %.4s, Model: %.3s, Build ID: %.9s\n",
+		sc->MachineType, sc->MachineModel, sc->BuildID);
+	device_printf(dev, "Box Serial: %.7s, Planar Serial: %.11s\n",
+		sc->BoxSerial, sc->PlanarSerial);
+		
+	return (0);
+bad:
+	if (sc->res)
+		bus_release_resource(dev, SYS_RES_MEMORY, sc->rid, sc->res);
+	return (error);
+}
+
+static int
+vpd_detach (device_t dev)
+{
+	struct vpd_softc *sc;
+
+	sc = device_get_softc(dev);
+
+	if (sc->res)
+		bus_release_resource(dev, SYS_RES_MEMORY, sc->rid, sc->res);
+
+	sysctl_ctx_free(&sc->ctx);
+
+	return (0);
+}
+
+static int
+vpd_modevent (module_t mod, int what, void *arg)
+{
+	device_t *	devs;
+	int		count;
+	int		i;
+
+	switch (what) {
+	case MOD_LOAD:
+		break;
+	case MOD_UNLOAD:
+		devclass_get_devices(devclass_find("vpd"), &devs, &count);
+		for (i = 0; i < count; i++) {
+			device_delete_child(device_get_parent(devs[i]), devs[i]);
+		}
+		break;
+	default:
+		break;
+	}
+
+	return (0);
+}
+
+static device_method_t vpd_methods[] = {
+	/* Device interface */
+	DEVMETHOD(device_identify,      vpd_identify),
+	DEVMETHOD(device_probe,         vpd_probe),
+	DEVMETHOD(device_attach,        vpd_attach),
+	DEVMETHOD(device_detach,        vpd_detach),
+	{ 0, 0 }
+};
+
+static driver_t vpd_driver = {
+	"vpd",
+	vpd_methods,
+	sizeof(struct vpd_softc),
+};
+
+DRIVER_MODULE(vpd, nexus, vpd_driver, vpd_modevent, 0);
+MODULE_VERSION(vpd, 1);
+
+/*
+ * Perform a checksum over the VPD structure, starting with
+ * the BuildID.  (Jean Delvare <khali@linux-fr.org>)
+ */
+static int
+vpd_cksum (struct vpd *v)
+{
+	u_int8_t *ptr;
+	u_int8_t cksum;
+	int i;
+
+	ptr = (u_int8_t *)v;
+	cksum = 0;
+	for (i = offsetof(struct vpd, BuildID); i < v->Length ; i++)
+		cksum += ptr[i];
+	return (cksum);
+}
