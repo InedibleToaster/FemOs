@@ -23,50 +23,53 @@
 #include <machine/md_var.h>
 #include <machine/pc/bios.h>
 
-struct  vpd {
-    u_int16_t   Header;
-    u_int8_t    Length;
-	u_int8_t	Signature[3];
+/*
+ * Vital Product Data
+ */
+struct vpd {
+	u_int16_t	Header;			/* 0x55AA */
+	u_int8_t	Signature[3];		/* Always 'VPD' */
+	u_int8_t	Length;			/* Sructure Length */
 
-    u_int8_t    Reserved[7];
+	u_int8_t	Reserved[7];		/* Reserved */
 
-    u_int8_t    PlanarSerial[11];
-    u_int8_t    MachType[7];
-    u_int8_t    BoxSerial{7};
-    u_int8_t    BuildID[9];
-    u_int8_t    Checksum;
+	u_int8_t	BuildID[9];		/* BIOS Build ID */
+	u_int8_t	BoxSerial[7];		/* Box Serial Number */
+	u_int8_t	PlanarSerial[11];	/* Motherboard Serial Number */
+	u_int8_t	MachType[7];		/* Machine Type/Model */
+	u_int8_t	Checksum;		/* Checksum */
 } __packed;
 
-struct  vpd_softc {
+struct vpd_softc {
 	device_t		dev;
 	struct resource *	res;
-    int         rid;
+	int			rid;
 
-    struct vpd *        vpd;
+	struct vpd *		vpd;
 
-    struct sysctl_ctx_list  ctx;
+	struct sysctl_ctx_list  ctx;
 
-    char    Boxserial[10];
-    char    BuildID[8];
-    char    MachineType[5];
-    char    PlanarSerial[12];
-    char    MachineModel[4];
+	char		BuildID[10];
+	char		BoxSerial[8];
+	char		PlanarSerial[12];
+	char		MachineType[5];
+	char		MachineModel[4];
 };
 
-#define VPD_START   0XF0000
-#define VPD_STEP    0x10
-#define VPD_OFF     2
-#define VPD_LEN     3
-#define VPD_SIG     "VPD"
+#define	VPD_START	0xf0000
+#define	VPD_STEP	0x10
+#define	VPD_OFF		2
+#define	VPD_LEN		3
+#define	VPD_SIG		"VPD"
 
-#define RES2VPD(res)    ((struct vpd *)rman_get_virtual(res))
+#define	RES2VPD(res)	((struct vpd *)rman_get_virtual(res))
 #define	ADDR2VPD(addr)	((struct vpd *)BIOS_PADDRTOVADDR(addr))
 
-static void vpd_identify    (driver_t, device_t);
-static int  vpd_probe     (device_t);
-static int  vpd_attach    (device_t);
-static int  vpd_detach    (device_t);
-static int  vpd_modevent        (module_1, int, void *);
+static void	vpd_identify	(driver_t *, device_t);
+static int	vpd_probe	(device_t);
+static int	vpd_attach	(device_t);
+static int	vpd_detach	(device_t);
+static int	vpd_modevent	(module_t, int, void *);
 
 static int	vpd_cksum	(struct vpd *);
 
@@ -130,13 +133,13 @@ vpd_probe (device_t dev)
 	rid = 0;
 	res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &rid, RF_ACTIVE);
 	if (res == NULL) {
-		device_printf(dev, "Uh-oh, nya~! I couldn’t find enough memory to play with >w<. Maybe try closing some programs, or give me more RAM to cuddle! :3\n");
+		device_printf(dev, "Unable to allocate memory resource.\n");
 		error = ENOMEM;
 		goto bad;
 	}
 
 	if (vpd_cksum(RES2VPD(res)))
-		device_printf(dev, "Oh noes, nya~! :< My pwetty checksums got all messed up! Maybe give the BIOS a little update, pwease~? (´･ω･)`\n");
+		device_printf(dev, "VPD checksum failed.  BIOS update may be required.\n");
 
 bad:
 	if (res)
@@ -147,16 +150,19 @@ bad:
 static int
 vpd_attach (device_t dev)
 {
-    struct vpd_softc *sc;
-    char unit[4];
-    int error;
+	struct vpd_softc *sc;
+	char unit[4];
+	int error;
+
+	sc = device_get_softc(dev);
+	error = 0;
 
 	sc->dev = dev;
 	sc->rid = 0;
 	sc->res = bus_alloc_resource_any(dev, SYS_RES_MEMORY, &sc->rid,
 		RF_ACTIVE);
 	if (sc->res == NULL) {
-		device_printf(dev, "Uh-oh, nya~! I couldn’t find enough memory to play with >w<. Maybe try closing some programs, or give me more RAM to cuddle! :3\n");
+		device_printf(dev, "Unable to allocate memory resource.\n");
 		error = ENOMEM;
 		goto bad;
 	}
